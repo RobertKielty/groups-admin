@@ -13,6 +13,7 @@ func main() {
 	client := groupsclient.NewGroupsClient("https://lists.cncf.io")
 	emailPtr := flag.String("email", "", "groups.io email")
 	passwordPtr := flag.String("pass", "", "groups.io password")
+	short := flag.Bool("short", true, "short summary report on stdout")
 	flag.Parse()
 
 	// Authenticate and get the token
@@ -42,12 +43,18 @@ func main() {
 		fmt.Printf("%s is not subscribed to any groups!\n", *emailPtr)
 		return
 	} else {
-		fmt.Printf("%s is subscribed to %d groups, they are...\n", *emailPtr, subscriptionCount)
-		for _, subscription := range loggedInUsersSubs {
-			fmt.Printf("%s, ", subscription.GroupName)
+		if *short == true {
+			summaryReport(emailPtr, subscriptionCount, loggedInUsersSubs)
 		}
 	}
 
+}
+
+func summaryReport(emailPtr *string, subscriptionCount int, loggedInUsersSubs []groupsclient.GroupData) {
+	fmt.Printf("%s is subscribed to %d groups, they are...\n", *emailPtr, subscriptionCount)
+	for _, subscription := range loggedInUsersSubs {
+		fmt.Printf("%s, ", subscription.GroupName)
+	}
 }
 
 // ContinuePrompt asks if user wants to continue

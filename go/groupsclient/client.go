@@ -65,7 +65,7 @@ type User struct {
 	DefaultRsvpView         string `json:"default_rsvp_view"`
 	HomePage                string `json:"home_page"`
 }
-type groupData struct {
+type GroupData struct {
 	ID                  int       `json:"id"`
 	Object              string    `json:"object"`
 	Created             string    `json:"created"`
@@ -197,7 +197,7 @@ type MemberInfoList struct {
 	Query         string `json:"query"`
 	SortDir       string `json:"sort_dir"`
 	// groupData
-	Data []groupData `json:"data"`
+	Data []GroupData `json:"data"`
 }
 
 // NewGroupsClient function to initialize the GroupsClient
@@ -255,7 +255,7 @@ func (c *GroupsClient) doRequest(method, endpoint string, body io.Reader) (*http
 }
 
 // GetMemberInfoList method to get member info list with pagination
-func (c *GroupsClient) GetMemberInfoList() ([]groupData, int, error) {
+func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 	// First call should not include the page_token parameter
 	objectLimit := 100
 	subCount := 0
@@ -280,7 +280,7 @@ func (c *GroupsClient) GetMemberInfoList() ([]groupData, int, error) {
 	}
 	resp.Body.Close() // ignoring error
 	subCount = memberInfoList.TotalCount
-	allSubscriptions := make([]groupData, 0, subCount)
+	allSubscriptions := make([]GroupData, 0, subCount)
 	allSubscriptions = append(allSubscriptions, memberInfoList.Data[:]...)
 	nextPageToken := memberInfoList.NextPageToken
 	hasMore := memberInfoList.HasMore
@@ -344,7 +344,7 @@ func (c *GroupsClient) GetLoggedInUserDetails() (*User, error) {
 
 // GrantOwnerPermsToUser assigns the OwnerRole to user for each group in groups
 // returns number of groups that were updated or error
-func (c *GroupsClient) GrantOwnerPermsToUser(user User, groups []groupData) (int, error) {
+func (c *GroupsClient) GrantOwnerPermsToUser(user User, groups []GroupData) (int, error) {
 	var groupsUpdated int = 0
 	var err error = nil
 	fmt.Printf("Making %v on %d groups\n", user, len(groups))
