@@ -11,9 +11,13 @@ import (
 
 func main() {
 	client := groupsclient.NewGroupsClient("https://lists.cncf.io")
-	emailPtr := flag.String("email", "", "groups.io email")
-	passwordPtr := flag.String("pass", "", "groups.io password")
-	short := flag.Bool("short", true, "short summary report on stdout")
+	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
+	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
+	// TODO make the command "more normal" (i.e. not a --cmd=COMMAND, flag but a bare command arg)
+	cmdPtr := flag.String("cmd", "view", "Can be one of: getsubs, xferSubs, getUser")
+
+	targetEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
+
 	flag.Parse()
 
 	// Authenticate and get the token
@@ -23,19 +27,20 @@ func main() {
 		return
 	}
 
-	// Get user ID for the existing user email
-	userDetails, err := client.GetLoggedInUserDetails()
+	// Get user data associated with the user that we authorized the groups.io client.
+	// For perms transfer this is the "source user", srcUser
+	srcUser, err := client.GetAuthenticatedUser()
 	if err != nil {
-		fmt.Printf("Error getting user ID for %s: %v\n", emailPtr, err)
+		fmt.Printf("Error getting user ID for %s: %v\n", *emailPtr, err)
 		return
 	}
-	fmt.Printf("userId of loggedInUser: %v\n", userDetails.ID)
-	fmt.Printf("FullName of loggedInUser: %v\n", userDetails.FullName)
+	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
+	fmt.Printf("FullName of loggedInUser: %v\n", srcUser.FullName)
 	// Get the list of subgroups where the existing user has Owner permissions
-	loggedInUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
+	srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
 
 	if err != nil {
-		fmt.Printf("Error getting user groups for %s: %v\n", userDetails, err)
+		fmt.Printf("Error getting user groups for %s: %v\n", srcUser.FullName, err)
 		return
 	}
 
@@ -43,14 +48,39 @@ func main() {
 		fmt.Printf("%s is not subscribed to any groups!\n", *emailPtr)
 		return
 	} else {
-		if *short == true {
-			summaryReport(emailPtr, subscriptionCount, loggedInUsersSubs)
+
+		switch *cmdPtr {
+		case "srcUserSubs":
+			fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
+		case "getUser":
+			targetUser, err := client.SearchMemberDetails(*targetEmailPtr)
+			if err != nil {
+				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+				return
+			}
+			userReport(targetUser)
+		case "xferSubs":
+			targetUser, err := client.SearchMemberDetails(*targetEmailPtr)
+			if err != nil {
+				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+				return
+			}
+
+			targetUserSubs, err := client.GrantOwnerPermsToUser(*targetUser, srcUsersSubs)
+			fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
+		default:
+			fmt.Printf("unknown sub command %s\n", *cmdPtr)
 		}
+
 	}
 
 }
+func userReport(u interface{}) {
+	fmt.Printf("User is %+v\n", u)
+}
 
-func summaryReport(emailPtr *string, subscriptionCount int, loggedInUsersSubs []groupsclient.GroupData) {
+// fullSummaryReport reports on the logged-in user, showing their email, subs count and a list of their subscriptions
+func fullSummaryReport(emailPtr *string, subscriptionCount int, loggedInUsersSubs []groupsclient.GroupData) {
 	fmt.Printf("%s is subscribed to %d groups, they are...\n", *emailPtr, subscriptionCount)
 	for _, subscription := range loggedInUsersSubs {
 		fmt.Printf("%s, ", subscription.GroupName)
@@ -96,84 +126,3 @@ func YesNoPrompt(label string, def bool) bool {
 		}
 	}
 }
-
-//func getUserGroups(apiToken, userID string) ([]string, error) {
-//	url := fmt.Sprintf("%s/users/%s/groups", apiBaseURL, userID)
-//	req, err := http.NewRequest("GET", url, nil)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	req.Header.Set("Authorization", "Bearer "+apiToken)
-//	client := &http.Client{}
-//	resp, err := client.Do(req)
-//	if err != nil {
-//		return nil, err
-//	}
-//	defer func(Body io.ReadCloser) {
-//		err := Body.Close()
-//		if err != nil {
-//
-//		}
-//	}(resp.Body)
-//
-//	if resp.StatusCode != http.StatusOK {
-//		return nil, fmt.Errorf("received non-200 response code: %d", resp.StatusCode)
-//	}
-//
-//	body, err := io.ReadAll(resp.Body)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	var groups []Group
-//	err = json.Unmarshal(body, &groups)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	var groupIDs []string
-//	for _, group := range groups {
-//		if group.Role == "owner" {
-//			groupIDs = append(groupIDs, group.ID)
-//		}
-//	}
-//
-//	return groupIDs, nil
-//}
-//
-//func grantOwnerPermissions(apiToken, groupID, userID string) error {
-//	url := fmt.Sprintf("%s/groups/%s/members/%s/role", apiBaseURL, groupID, userID)
-//	payload := map[string]string{"role": "owner"}
-//	jsonPayload, err := json.Marshal(payload)
-//	if err != nil {
-//		return err
-//	}
-//
-//	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonPayload))
-//	if err != nil {
-//		return err
-//	}
-//
-//	req.Header.Set("Authorization", "Bearer "+apiToken)
-//	req.Header.Set("Content-Type", "application/json")
-//
-//	client := &http.Client{}
-//	resp, err := client.Do(req)
-//	if err != nil {
-//		return err
-//	}
-//	defer func(Body io.ReadCloser) error {
-//		err := Body.Close()
-//		if err != nil {
-//			return err
-//		}
-//		return err
-//	}(resp.Body)
-//
-//	if resp.StatusCode != http.StatusOK {
-//		return fmt.Errorf("received non-200 response code: %d", resp.StatusCode)
-//	}
-//
-//	return nil
-//}

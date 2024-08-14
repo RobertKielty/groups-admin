@@ -21,6 +21,26 @@ type GroupsClient struct {
 	Token   string
 	Client  *http.Client
 }
+type Org struct {
+	ID                  int    `json:"id"`
+	Object              string `json:"object"`
+	Created             string `json:"created"`
+	Updated             string `json:"updated"`
+	Title               string `json:"title"`
+	Domain              string `json:"domain"`
+	ParentGroupID       int    `json:"parent_group_id"`
+	LoggedOutWikiPageID int    `json:"logged_out_wiki_page_id"`
+	DefaultTimezone     string `json:"default_timezone"`
+	DisableSignup       bool   `json:"disable_signup"`
+	DisablePlusOne      bool   `json:"disable_plus_one"`
+	GaCode              string `json:"ga_code"`
+	LoginPageText       string `json:"login_page_text"`
+	NoAccountText       string `json:"no_account_text"`
+	SsoProvider         string `json:"sso_provider"`
+	SsoClientID         string `json:"sso_client_id"`
+	SsoClientSecret     string `json:"sso_client_secret"`
+	SsoDomain           string `json:"sso_domain"`
+}
 type User struct {
 	ID                      int    `json:"id"`
 	Object                  string `json:"object"`
@@ -244,7 +264,7 @@ func (c *GroupsClient) Authenticate(email, password string) error {
 // doRequest method to make authenticated HTTP requests
 func (c *GroupsClient) doRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", c.BaseURL, endpoint), body)
-
+	fmt.Printf("client.doRequest: %s%s\n", c.BaseURL, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +274,35 @@ func (c *GroupsClient) doRequest(method, endpoint string, body io.Reader) (*http
 	return c.Client.Do(req)
 }
 
-// GetMemberInfoList method to get member info list with pagination
+// GetOrg gets the org object for domain that the client is authenticated against
+// https://groups.io/api#get_org
+// https://groups.io/api#the-org-object
+func (c *GroupsClient) GetOrg() (*Org, error) {
+	resp, err := c.doRequest("GET", "/api/v1/getorg", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // ignoring error
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GetOrg : received non-200 response code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var orgDetails Org
+	if err := json.Unmarshal(body, &orgDetails); err != nil {
+		return nil, err
+	}
+
+	return &orgDetails, nil
+}
+
+// GetMemberInfoList method to get member info list of the authenticated user with pagination
+// https://groups.io/api#get-subscriptions
 func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 	// First call should not include the page_token parameter
 	objectLimit := 100
@@ -317,8 +365,46 @@ func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 	return allSubscriptions, subCount, nil
 }
 
-// GetLoggedInUserDetails method to get user details from the API
-func (c *GroupsClient) GetLoggedInUserDetails() (*User, error) {
+// SearchMemberDetails retrieves the User data associated with fullEmail.
+// underlying end point returns a list, but I want this fn to only return a single user
+// or an error
+// https://groups.io/api#search-members
+func (c *GroupsClient) bkillen@linuxfoundation.org(fullEmail string) (*User, error) {
+
+	org, err := c.GetOrg()
+	if err != nil {
+		return nil, err
+	}
+
+	searchQuery := fmt.Sprintf("/api/v1/searchmembers?group_id=%d&q=%s", org.ParentGroupID, url.QueryEscape(fullEmail))
+	resp, err := c.doRequest(
+		"GET",
+		searchQuery,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // ignoring error
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SearchMemberDetails: received non-200 response code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var searchedUserDetails User
+	if err := json.Unmarshal(body, &searchedUserDetails); err != nil {
+		return nil, err
+	}
+
+	return &searchedUserDetails, nil
+}
+
+// GetAuthenticatedUser method to get user details from the API
+func (c *GroupsClient) GetAuthenticatedUser() (*User, error) {
 	resp, err := c.doRequest("GET", "/api/v1/getuser", nil)
 	if err != nil {
 		return nil, err
@@ -326,7 +412,7 @@ func (c *GroupsClient) GetLoggedInUserDetails() (*User, error) {
 	defer resp.Body.Close() // ignoring error
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("received non-200 response code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("GetAuthenticatedUser : received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -345,7 +431,7 @@ func (c *GroupsClient) GetLoggedInUserDetails() (*User, error) {
 // GrantOwnerPermsToUser assigns the OwnerRole to user for each group in groups
 // returns number of groups that were updated or error
 func (c *GroupsClient) GrantOwnerPermsToUser(user User, groups []GroupData) (int, error) {
-	var groupsUpdated int = 0
+	var groupsUpdated = 0
 	var err error = nil
 	fmt.Printf("Making %v on %d groups\n", user, len(groups))
 
