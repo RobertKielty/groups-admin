@@ -10,20 +10,18 @@ import (
 )
 
 func main() {
-	client := groupsclient.NewGroupsClient("https://lists.cncf.io")
+	baseUrl := flag.String("baseUrl", "", "base url of the groups.io server")
 	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
 	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
-	// TODO make the command "more normal" (i.e. not a --cmd=COMMAND, flag but a bare command arg)
 	cmdPtr := flag.String("cmd", "view", "Can be one of: getsubs, xferSubs, getUser")
-
-	targetEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
+	destEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
 
 	flag.Parse()
-
+	client := groupsclient.NewGroupsClient(*baseUrl)
 	// Authenticate and get the token
 	err := client.Authenticate(*emailPtr, *passwordPtr)
 	if err != nil {
-		fmt.Println("Error authenticating:", err)
+		fmt.Printf("main: client.Authenticate %+v", err)
 		return
 	}
 
@@ -31,7 +29,7 @@ func main() {
 	// For perms transfer this is the "source user", srcUser
 	srcUser, err := client.GetAuthenticatedUser()
 	if err != nil {
-		fmt.Printf("Error getting user ID for %s: %v\n", *emailPtr, err)
+		fmt.Printf("main: Error getting user ID for %s: %v\n", *emailPtr, err)
 		return
 	}
 	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
@@ -40,47 +38,48 @@ func main() {
 	srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
 
 	if err != nil {
-		fmt.Printf("Error getting user groups for %s: %v\n", srcUser.FullName, err)
+		fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
 		return
 	}
 
 	if subscriptionCount == 0 {
-		fmt.Printf("%s is not subscribed to any groups!\n", *emailPtr)
+		fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
 		return
 	} else {
-
 		switch *cmdPtr {
 		case "srcUserSubs":
 			fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
 		case "getUser":
-			targetUser, err := client.SearchMemberDetails(*targetEmailPtr)
-			if err != nil {
-				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
-				return
-			}
-			userReport(targetUser)
-		case "xferSubs":
-			targetUser, err := client.SearchMemberDetails(*targetEmailPtr)
-			if err != nil {
-				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
-				return
+			if len(*destEmailPtr) > 9 {
+				targetUser, err := client.SearchMemberDetails(*destEmailPtr)
+				if err != nil {
+					fmt.Printf("main: switch case %s: SearchMemberDetails(%s) returned %v\n", *cmdPtr, *destEmailPtr, err)
+					return
+				}
+				userReport(targetUser)
+			} else {
+				fmt.Printf("main: switch case %s: --destEmail not specified.\n", *cmdPtr)
 			}
 
-			targetUserSubs, err := client.GrantOwnerPermsToUser(*targetUser, srcUsersSubs)
+		case "xferSubs":
+			targetUser, err := client.SearchMemberDetails(*destEmailPtr)
+			if err != nil {
+				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+				return
+			}
+			targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, srcUsersSubs)
 			fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
 		default:
-			fmt.Printf("unknown sub command %s\n", *cmdPtr)
+			fmt.Printf("main.go: unknown sub command %s\n", *cmdPtr)
 		}
-
 	}
-
 }
 func userReport(u interface{}) {
 	fmt.Printf("User is %+v\n", u)
 }
 
 // fullSummaryReport reports on the logged-in user, showing their email, subs count and a list of their subscriptions
-func fullSummaryReport(emailPtr *string, subscriptionCount int, loggedInUsersSubs []groupsclient.GroupData) {
+func fullSummaryReport(emailPtr *string, subscriptionCount int, loggedInUsersSubs []groupsclient.MemberInfo) {
 	fmt.Printf("%s is subscribed to %d groups, they are...\n", *emailPtr, subscriptionCount)
 	for _, subscription := range loggedInUsersSubs {
 		fmt.Printf("%s, ", subscription.GroupName)

@@ -2,10 +2,13 @@ package groupsclient
 
 import (
 	"encoding/json"
-	"fmt"
+	. "fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,7 +88,7 @@ type User struct {
 	DefaultRsvpView         string `json:"default_rsvp_view"`
 	HomePage                string `json:"home_page"`
 }
-type GroupData struct {
+type MemberInfo struct {
 	ID                  int       `json:"id"`
 	Object              string    `json:"object"`
 	Created             string    `json:"created"`
@@ -217,14 +220,25 @@ type MemberInfoList struct {
 	Query         string `json:"query"`
 	SortDir       string `json:"sort_dir"`
 	// groupData
-	Data []GroupData `json:"data"`
+	Data []MemberInfo `json:"data"`
+}
+
+func (mi MemberInfo) String() string {
+	return Sprintf("MemberInfo { %s <%s> - [UserId %d] [GroupId %d]}", mi.FullName, mi.Email, mi.UserID, mi.GroupID)
+}
+func checkClose(err error, msg string) {
+	if err != nil {
+		log.Printf("checkClose : %s: %s", msg, err)
+	}
 }
 
 // NewGroupsClient function to initialize the GroupsClient
 func NewGroupsClient(baseURL string) *GroupsClient {
 	return &GroupsClient{
 		BaseURL: baseURL,
-		Client:  &http.Client{},
+		Client: &http.Client{
+			Timeout: 60 * time.Second,
+		},
 	}
 }
 
@@ -236,21 +250,22 @@ func (c *GroupsClient) Authenticate(email, password string) error {
 		"token":    {"true"},
 	}
 
-	groupsApiLoginUrl := fmt.Sprintf("%s/api/v1/login", c.BaseURL)
+	groupsApiLoginUrl := Sprintf("%s/api/v1/login", c.BaseURL)
+
 	resp, err := c.Client.Post(groupsApiLoginUrl, "application/x-www-form-urlencoded", strings.NewReader(formData.Encode()))
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close() // ignoring error
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received non-200 response code: %d", resp.StatusCode)
+		return Errorf("received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
+	defer checkClose(resp.Body.Close(), "GroupsClient.Authenticate: Error closing resp.Body")
 
 	var tokenResponse TokenResponse
 	if err := json.Unmarshal(body, &tokenResponse); err != nil {
@@ -263,14 +278,17 @@ func (c *GroupsClient) Authenticate(email, password string) error {
 
 // doRequest method to make authenticated HTTP requests
 func (c *GroupsClient) doRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(method, fmt.Sprintf("%s%s", c.BaseURL, endpoint), body)
-	fmt.Printf("client.doRequest: %s%s\n", c.BaseURL, endpoint)
+	time.Sleep(1 * time.Second)
+	req, err := http.NewRequest(method, Sprintf("%s%s", c.BaseURL, endpoint), body)
+	//log.Printf("client.doRequest: %s%s\n", c.BaseURL, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	// Add the token to the Authorization header using basic auth format
 	req.SetBasicAuth(c.Token, "")
+	// FIXME gate this setting for POST reqs only??
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.Client.Do(req)
 }
 
@@ -282,16 +300,16 @@ func (c *GroupsClient) GetOrg() (*Org, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() // ignoring error
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GetOrg : received non-200 response code: %d", resp.StatusCode)
+		return nil, Errorf("GetOrg : received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+	defer checkClose(resp.Body.Close(), "GroupsClient.GetOrg() Error closing resp.Body")
 
 	var orgDetails Org
 	if err := json.Unmarshal(body, &orgDetails); err != nil {
@@ -303,18 +321,18 @@ func (c *GroupsClient) GetOrg() (*Org, error) {
 
 // GetMemberInfoList method to get member info list of the authenticated user with pagination
 // https://groups.io/api#get-subscriptions
-func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
+func (c *GroupsClient) GetMemberInfoList() ([]MemberInfo, int, error) {
 	// First call should not include the page_token parameter
 	objectLimit := 100
 	subCount := 0
-	resp, err := c.doRequest("GET", fmt.Sprintf("/api/v1/getsubs?limit=%d", objectLimit), nil)
+	resp, err := c.doRequest("GET", Sprintf("/api/v1/getsubs?limit=%d", objectLimit), nil)
 
 	if err != nil {
 		return nil, subCount, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, subCount, fmt.Errorf("GetMemberInfoList: first call to getsubs, received non-200 response code: %d", resp.StatusCode)
+		return nil, subCount, Errorf("GetMemberInfoList: first call to getsubs, received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -326,16 +344,16 @@ func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 	if err := json.Unmarshal(body, &memberInfoList); err != nil {
 		return nil, 0, err
 	}
-	resp.Body.Close() // ignoring error
+	checkClose(resp.Body.Close(), "GroupsClient.GetMemberInfoList() Error closing resp.Body")
 	subCount = memberInfoList.TotalCount
-	allSubscriptions := make([]GroupData, 0, subCount)
+	allSubscriptions := make([]MemberInfo, 0, subCount)
 	allSubscriptions = append(allSubscriptions, memberInfoList.Data[:]...)
 	nextPageToken := memberInfoList.NextPageToken
 	hasMore := memberInfoList.HasMore
 
 	// ref https://groups.io/api#pagination
 	for hasMore != false {
-		endpoint := fmt.Sprintf("/api/v1/getsubs?limit=100&page_token=%d", nextPageToken)
+		endpoint := Sprintf("/api/v1/getsubs?limit=100&page_token=%d", nextPageToken)
 		forLoopResponse, err := c.doRequest("GET", endpoint, nil)
 
 		if err != nil {
@@ -343,7 +361,7 @@ func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 		}
 
 		if forLoopResponse.StatusCode != http.StatusOK {
-			return nil, subCount, fmt.Errorf("received non-200 response code: %d", forLoopResponse.StatusCode)
+			return nil, subCount, Errorf("received non-200 response code: %d", forLoopResponse.StatusCode)
 		}
 
 		body, err := io.ReadAll(forLoopResponse.Body)
@@ -359,24 +377,99 @@ func (c *GroupsClient) GetMemberInfoList() ([]GroupData, int, error) {
 		allSubscriptions = append(allSubscriptions, subscription.Data[:]...)
 		nextPageToken = subscription.NextPageToken
 		hasMore = subscription.HasMore
-		forLoopResponse.Body.Close() // ignoring error
+		checkClose(forLoopResponse.Body.Close(), "GroupsClient.GetOrg() Error closing forLoopResponse.Body")
+
 	}
 
 	return allSubscriptions, subCount, nil
 }
 
-// SearchMemberDetails retrieves the User data associated with fullEmail.
-// underlying end point returns a list, but I want this fn to only return a single user
-// or an error
+// GetMemberId  returns the membership ID of userId if they are a member of groupId
+// using https://groups.io/api#getmembers
+func (c *GroupsClient) GetMemberId(groupId int, userId int) (int, error) {
+	// First call should not include the page_token parameter
+	objectLimit := 100
+	memberCount := 0
+	resp, err := c.doRequest("GET", Sprintf("/api/v1/getmembers?group_id=%d&limit=%d", groupId, objectLimit), nil)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("GetMemberId,  getmembers, resp: %v, groupId %d, (userId %d)", resp, groupId, userId)
+		return 0, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	checkClose(resp.Body.Close(), "GroupsClient.GetMemberId() Error closing resp.Body")
+	var memberInfoList MemberInfoList
+	if err := json.Unmarshal(body, &memberInfoList); err != nil {
+		return 0, err
+	}
+
+	memberCount = memberInfoList.TotalCount
+	allMembers := make([]MemberInfo, 0, memberCount)
+	allMembers = append(allMembers, memberInfoList.Data[:]...)
+	nextPageToken := memberInfoList.NextPageToken
+	hasMore := memberInfoList.HasMore
+
+	// ref https://groups.io/api#pagination
+	for hasMore != false {
+		endpoint := Sprintf("/api/v1/getmemberss?limit=100&page_token=%d", nextPageToken)
+		forLoopResponse, err := c.doRequest("GET", endpoint, nil)
+
+		if err != nil {
+			return 0, err
+		}
+
+		if forLoopResponse.StatusCode != http.StatusOK {
+			return 0, Errorf("received non-200 response code: %d", forLoopResponse.StatusCode)
+		}
+		body, err := io.ReadAll(forLoopResponse.Body)
+		if err != nil {
+			return 0, err
+		}
+
+		var members MemberInfoList
+		if err = json.Unmarshal(body, &members); err != nil {
+			return 0, err
+		}
+
+		allMembers = append(allMembers, members.Data[:]...)
+		nextPageToken = members.NextPageToken
+		hasMore = members.HasMore
+		checkClose(forLoopResponse.Body.Close(), "GroupsClient.GetOrg() Error closing forLoopResponse.Body")
+	}
+	for _, member := range allMembers {
+		if member.UserID == userId {
+			return member.ID, nil
+		}
+	}
+	return 0, Errorf("GetMemberId, UserId : %d not found in groupId %d\n", userId, groupId)
+}
+
+// SearchMemberDetails retrieves the User data associated with fullEmail from the Org's main group
+// the underlying groups.io end point returns a list but this function will only return data about a user's membership
+// of main when the fullEmail is associated with one, and only one record,  in that list.
 // https://groups.io/api#search-members
-func (c *GroupsClient) bkillen@linuxfoundation.org(fullEmail string) (*User, error) {
+func (c *GroupsClient) SearchMemberDetails(fullEmail string) (*MemberInfo, error) {
 
 	org, err := c.GetOrg()
 	if err != nil {
 		return nil, err
 	}
-
-	searchQuery := fmt.Sprintf("/api/v1/searchmembers?group_id=%d&q=%s", org.ParentGroupID, url.QueryEscape(fullEmail))
+	// NOTES in endpoint:
+	// 1. The Org's parent group is being searched (org.ParentGroupID)
+	// 2. The q parameter of searchmembers is a query and allows you to search for members with a partial string
+	//
+	// If you wanted to get a list of all members from a specific domain you could do that. But that is not what we are
+	// doing here. We want to get a memberInfo record for a single user in the main group. This record can then be used
+	// for administrative purposes elsewhere.
+	searchQuery := Sprintf("/api/v1/searchmembers?group_id=%d&q=%s", org.ParentGroupID, url.QueryEscape(fullEmail))
 	resp, err := c.doRequest(
 		"GET",
 		searchQuery,
@@ -385,22 +478,25 @@ func (c *GroupsClient) bkillen@linuxfoundation.org(fullEmail string) (*User, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() // ignoring error
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("SearchMemberDetails: received non-200 response code: %d", resp.StatusCode)
+		return nil, Errorf("SearchMemberDetails: received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	var searchedUserDetails User
-	if err := json.Unmarshal(body, &searchedUserDetails); err != nil {
+	var memberInfoList MemberInfoList
+	if err := json.Unmarshal(body, &memberInfoList); err != nil {
 		return nil, err
 	}
-
-	return &searchedUserDetails, nil
+	if memberInfoList.TotalCount == 1 {
+		member := memberInfoList.Data[memberInfoList.StartItem-1]
+		return &member, nil
+	} else {
+		return nil, Errorf("SearchMemberDetails: %s returned %d items in list", fullEmail, memberInfoList.TotalCount)
+	}
 }
 
 // GetAuthenticatedUser method to get user details from the API
@@ -409,16 +505,16 @@ func (c *GroupsClient) GetAuthenticatedUser() (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() // ignoring error
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GetAuthenticatedUser : received non-200 response code: %d", resp.StatusCode)
+		return nil, Errorf("GetAuthenticatedUser : received non-200 response code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+	defer checkClose(resp.Body.Close(), "GroupsClient.GetAuthenticatedUser: Error closing resp.Body")
 
 	var loggedInUserDetails User
 	if err := json.Unmarshal(body, &loggedInUserDetails); err != nil {
@@ -428,12 +524,65 @@ func (c *GroupsClient) GetAuthenticatedUser() (*User, error) {
 	return &loggedInUserDetails, nil
 }
 
-// GrantOwnerPermsToUser assigns the OwnerRole to user for each group in groups
-// returns number of groups that were updated or error
-func (c *GroupsClient) GrantOwnerPermsToUser(user User, groups []GroupData) (int, error) {
-	var groupsUpdated = 0
+// GrantOwnerPermsToGroupMember assigns the OwnerRole to newOwner for each group in targetGroups
+// returns number of groups that were updated or error.
+func (c *GroupsClient) GrantOwnerPermsToGroupMember(newOwner MemberInfo, targetGroups []MemberInfo) (int, error) {
+	var groupsUpdated int = 0
 	var err error = nil
-	fmt.Printf("Making %v on %d groups\n", user, len(groups))
-
+	for _, group := range targetGroups {
+		thisGroupsMemberId, gmiError := c.GetMemberId(group.GroupID, newOwner.UserID)
+		if gmiError == nil {
+			m, ugmError := c.UpdateGroupMember(group.GroupID, thisGroupsMemberId, "mod_status", "sub_modstatus_owner")
+			if ugmError == nil {
+				groupsUpdated++
+				log.Printf("INFO Member %s should now be an owner on group %d", m.FullName, group.GroupName)
+			} else {
+				log.Printf("WARN Member %s was not updated to owner of group %s", newOwner.FullName, group.GroupName)
+			}
+		} else {
+			log.Printf("WARN : Member %s was not a member of group %s GetMemberId returned", newOwner.FullName, group.GroupName, gmiError)
+		}
+	}
 	return groupsUpdated, err
+}
+
+// UpdateGroupMember updates field to value for memberId on groupID, returns an err if this fails to happen
+func (c *GroupsClient) UpdateGroupMember(groupId int, memberId int, field string, value string) (MemberInfo, error) {
+	mbr := MemberInfo{}
+	formData := url.Values{}
+	formData.Set("group_id", strconv.Itoa(groupId))
+	formData.Set("member_info_id", strconv.Itoa(memberId))
+	formData.Set("extra", "true")
+	formData.Set(field, value)
+	reqBody := strings.NewReader(formData.Encode())
+	resp, reqErr := c.doRequest("POST", "/api/v1/updatemember", reqBody)
+	if reqErr != nil {
+		Printf(
+			"UpdateGroupMember: ERROR, endpoint: %s, formData: %v, reqErr %v",
+			"/api/v1/updatemember",
+			formData,
+			reqErr,
+		)
+		Printf("UpdateGroupMember: ERROR, response: %+v, err: %+v", resp, reqErr)
+		os.Exit(1)
+		return mbr, reqErr
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		errRespBody, _ := io.ReadAll(resp.Body)
+		return mbr,
+			Errorf("UpdateGroupMember: ERROR, called : %s, formData : %+v response: %+v, err: %+v responseBody: %s",
+				"/api/v1/updatemember ", formData, resp, reqErr, errRespBody)
+	}
+
+	response, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return mbr, readErr
+	}
+
+	if unmErr := json.Unmarshal(response, &mbr); unmErr != nil {
+		return mbr, unmErr
+	}
+
+	return mbr, nil
 }
