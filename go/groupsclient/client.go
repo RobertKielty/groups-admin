@@ -223,6 +223,58 @@ type MemberInfoList struct {
 	Data []MemberInfo `json:"data"`
 }
 
+type PendingMsg struct {
+	Object         string `json:"object"`
+	ID             int    `json:"id"`
+	Created        string `json:"created"`
+	Updated        string `json:"updated"`
+	GroupID        int    `json:"group_id"`
+	UserID         int    `json:"user_id"`
+	Subject        string `json:"subject"`
+	IsSpecial      bool   `json:"is_special"`
+	IsWebPost      bool   `json:"is_web_post"`
+	HasAttachments bool   `json:"has_attachments"`
+	EditorMemberID int    `json:"editor_member_id"`
+	RawMessage     string `json:"raw_message"`
+	MessageBody    string `json:"message_body"`
+	BodyFormat     string `json:"body_format"`
+	Sender         struct {
+		ProfilePhotoURL string `json:"profile_photo_url"`
+		Name            string `json:"name"`
+		CanViewProfile  bool   `json:"can_view_profile"`
+	} `json:"sender"`
+	SenderEmail  string `json:"sender_email"`
+	SenderName   string `json:"sender_name"`
+	ClaimingUser struct {
+		ProfilePhotoURL string `json:"profile_photo_url"`
+		Name            string `json:"name"`
+		CanViewProfile  bool   `json:"can_view_profile"`
+	} `json:"claiming_user"`
+	ClaimedDate string `json:"claimed_date"`
+	Editor      struct {
+		ProfilePhotoURL string `json:"profile_photo_url"`
+		Name            string `json:"name"`
+		CanViewProfile  bool   `json:"can_view_profile"`
+	} `json:"editor"`
+	EditReason string `json:"edit_reason"`
+	Type       string `json:"type"`
+	VirusName  string `json:"virus_name"`
+}
+
+type PendingMsgList struct {
+	Object        string       `json:"object"`
+	TotalCount    int          `json:"total_count"`
+	StartItem     int          `json:"start_item"`
+	EndItem       int          `json:"end_item"`
+	HasMore       bool         `json:"has_more"`
+	NextPageToken int          `json:"next_page_token"`
+	SortField     string       `json:"sort_field"`
+	SecondOrder   string       `json:"second_order"`
+	Query         string       `json:"query"`
+	SortDir       string       `json:"sort_dir"`
+	Data          []PendingMsg `json:"pending_msg"`
+}
+
 func (mi MemberInfo) String() string {
 	return Sprintf("MemberInfo { %s <%s> - [UserId %d] [GroupId %d]}", mi.FullName, mi.Email, mi.UserID, mi.GroupID)
 }
@@ -280,7 +332,7 @@ func (c *GroupsClient) Authenticate(email, password string) error {
 func (c *GroupsClient) doRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
 	time.Sleep(1 * time.Second)
 	req, err := http.NewRequest(method, Sprintf("%s%s", c.BaseURL, endpoint), body)
-	//log.Printf("client.doRequest: %s%s\n", c.BaseURL, endpoint)
+	log.Printf("client.doRequest: %s%s\n", c.BaseURL, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +367,6 @@ func (c *GroupsClient) GetOrg() (*Org, error) {
 	if err := json.Unmarshal(body, &orgDetails); err != nil {
 		return nil, err
 	}
-
 	return &orgDetails, nil
 }
 
@@ -585,4 +636,77 @@ func (c *GroupsClient) UpdateGroupMember(groupId int, memberId int, field string
 	}
 
 	return mbr, nil
+}
+
+// GetPendingMsgList method to get pending msg info list accessible to the authenticated user with pagination
+// FIRST PASS, see if we can get all the pending messages by passing in the parent group ID from the Org
+// https://groups.io/api#get-
+func (c *GroupsClient) GetPendingMsgList() ([]PendingMsg, int, error) {
+
+	org, err := c.GetOrg()
+	if err != nil {
+		return nil, 0, err
+	}
+	log.Printf("GetPendingMsgList: org %+v\n", org)
+	v1Endpoint := "getpendingmessages"
+	objectLimit := 100
+	count := 0
+	resource := Sprintf("/api/v1/%s?limit=%d&group_id=%d", v1Endpoint, objectLimit, org.ParentGroupID)
+	resp, err := c.doRequest("GET", resource, nil)
+
+	if err != nil {
+		return nil, count, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, count, Errorf("GetPendingMsgList: first call to %s, received non-200 response code: %d", v1Endpoint, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, count, err
+	}
+
+	var pendingMsgList PendingMsgList
+	if err := json.Unmarshal(body, &pendingMsgList); err != nil {
+		return nil, 0, err
+	}
+	checkClose(resp.Body.Close(), "GroupsClient.GetPendingMsgList() Error closing resp.Body")
+	count = pendingMsgList.TotalCount
+	allPendingMsgs := make([]PendingMsg, 0, count)
+	allPendingMsgs = append(allPendingMsgs, pendingMsgList.Data[:]...)
+	nextPageToken := pendingMsgList.NextPageToken
+	hasMore := pendingMsgList.HasMore
+
+	// ref https://groups.io/api#pagination
+	for hasMore != false {
+		endpoint := Sprintf("/api/v1/%s?limit=100&page_token=%d", v1Endpoint, nextPageToken)
+		forLoopResponse, err := c.doRequest("GET", endpoint, nil)
+
+		if err != nil {
+			return nil, count, err
+		}
+
+		if forLoopResponse.StatusCode != http.StatusOK {
+			return nil, count, Errorf("GroupsClient.GetPendingMsgList() for loop received non-200 response code: %d", forLoopResponse.StatusCode)
+		}
+
+		body, err := io.ReadAll(forLoopResponse.Body)
+		if err != nil {
+			return nil, count, err
+		}
+
+		var thisPagesPendingMsgList PendingMsgList
+		if err := json.Unmarshal(body, &thisPagesPendingMsgList); err != nil {
+			return nil, count, err
+		}
+
+		allPendingMsgs = append(allPendingMsgs, thisPagesPendingMsgList.Data[:]...)
+		nextPageToken = thisPagesPendingMsgList.NextPageToken
+		hasMore = thisPagesPendingMsgList.HasMore
+		checkClose(forLoopResponse.Body.Close(), "GroupsClient.GetPendingMsgList() Error closing forLoopResponse.Body")
+
+	}
+
+	return allPendingMsgs, count, nil
 }

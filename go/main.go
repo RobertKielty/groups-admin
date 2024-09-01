@@ -35,45 +35,69 @@ func main() {
 	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
 	fmt.Printf("FullName of loggedInUser: %v\n", srcUser.FullName)
 	// Get the list of subgroups where the existing user has Owner permissions
-	srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
+	switch *cmdPtr {
+	case "srcUserSubs":
+		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
 
-	if err != nil {
-		fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
-		return
-	}
+		if err != nil {
+			fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
+			return
+		}
 
-	if subscriptionCount == 0 {
-		fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
-		return
-	} else {
-		switch *cmdPtr {
-		case "srcUserSubs":
-			fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
-		case "getUser":
-			if len(*destEmailPtr) > 9 {
-				targetUser, err := client.SearchMemberDetails(*destEmailPtr)
-				if err != nil {
-					fmt.Printf("main: switch case %s: SearchMemberDetails(%s) returned %v\n", *cmdPtr, *destEmailPtr, err)
-					return
-				}
-				userReport(targetUser)
-			} else {
-				fmt.Printf("main: switch case %s: --destEmail not specified.\n", *cmdPtr)
-			}
-
-		case "xferSubs":
+		if subscriptionCount == 0 {
+			fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
+			return
+		}
+		fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
+	case "getUser":
+		if len(*destEmailPtr) > 9 {
 			targetUser, err := client.SearchMemberDetails(*destEmailPtr)
 			if err != nil {
-				fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+				fmt.Printf("main: switch case %s: SearchMemberDetails(%s) returned %v\n", *cmdPtr, *destEmailPtr, err)
 				return
 			}
-			targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, srcUsersSubs)
-			fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
-		default:
-			fmt.Printf("main.go: unknown sub command %s\n", *cmdPtr)
+			userReport(targetUser)
+		} else {
+			fmt.Printf("main: switch case %s: --destEmail not specified.\n", *cmdPtr)
 		}
+
+	case "xferSubs":
+		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
+
+		if err != nil {
+			fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
+			return
+		}
+
+		if subscriptionCount == 0 {
+			fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
+			return
+		}
+		targetUser, err := client.SearchMemberDetails(*destEmailPtr)
+		if err != nil {
+			fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+			return
+		}
+		targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, srcUsersSubs)
+		fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
+	case "pendMsgs":
+
+		pendingMessages, count, err := client.GetPendingMsgList()
+		if err != nil {
+			fmt.Printf("groups-admin: Error returned by client.getLists(%s) %s: %v \n", *cmdPtr, err)
+			return
+		}
+		fmt.Printf("pendMsgs: found %d ON MAIN GROUP\n", count)
+
+		//targetUserSubs, err := client.ReleasePendingEmail(listIds, allowedEmail)
+		for i, pendingMessage := range pendingMessages {
+			fmt.Printf("pendMsgs: %d, from: %+v, subject: %s\n", i, pendingMessage.Sender, pendingMessage.Subject)
+		}
+	default:
+		fmt.Printf("main.go: unknown sub command %s\n", *cmdPtr)
 	}
 }
+
 func userReport(u interface{}) {
 	fmt.Printf("User is %+v\n", u)
 }
