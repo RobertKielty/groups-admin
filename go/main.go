@@ -6,14 +6,30 @@ import (
 	"fmt"
 	"main/groupsclient"
 	"os"
+	"regexp"
 	"strings"
 )
+
+// filterSrcUserSubs takes a regular expression in re and returns an array of MemberInfo whose GroupName filed
+// matches the regular expression in filter
+func filterSrcUserSubs(re string, subs []groupsclient.MemberInfo) (int, []groupsclient.MemberInfo) {
+	filteredCount := 0
+	filteredList := make([]groupsclient.MemberInfo, 0)
+	var subsRegExp = regexp.MustCompile(re)
+	for _, sub := range subs {
+		if subsRegExp.MatchString(sub.GroupName) {
+			filteredList = append(filteredList, sub)
+		}
+	}
+	return filteredCount, filteredList
+}
 
 func main() {
 	baseUrl := flag.String("baseUrl", "", "base url of the groups.io server")
 	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
 	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
-	cmdPtr := flag.String("cmd", "view", "Can be one of: getsubs, xferSubs, getUser")
+	listFilterPtr := flag.String("filter", "", "RegEx to filter the lists of subscriptions that the command will work on")
+	cmdPtr := flag.String("cmd", "view", "Can be one of: srcUserSubs, getUser, xferSubs or pendMsgs")
 	destEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
 
 	flag.Parse()
@@ -34,11 +50,10 @@ func main() {
 	}
 	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
 	fmt.Printf("FullName of loggedInUser: %v\n", srcUser.FullName)
-	// Get the list of subgroups where the existing user has Owner permissions
 	switch *cmdPtr {
 	case "srcUserSubs":
+		// Get the list of subgroups where the existing user has Owner permissions
 		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
-
 		if err != nil {
 			fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
 			return
@@ -48,7 +63,13 @@ func main() {
 			fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
 			return
 		}
-		fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
+		if *listFilterPtr != "" {
+			fmt.Printf("main: Getting user groups for %s: filtered by %s\n", srcUser.FullName, *listFilterPtr)
+			filteredCount, filteredList := filterSrcUserSubs(*listFilterPtr, srcUsersSubs)
+			fullSummaryReport(emailPtr, filteredCount, filteredList)
+		} else {
+			fullSummaryReport(emailPtr, subscriptionCount, srcUsersSubs)
+		}
 	case "getUser":
 		if len(*destEmailPtr) > 9 {
 			targetUser, err := client.SearchMemberDetails(*destEmailPtr)
@@ -65,26 +86,41 @@ func main() {
 		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
 
 		if err != nil {
-			fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
+			fmt.Printf("main: xferSubs: Error getting user groups for %s: %v\n", srcUser.FullName, err)
 			return
 		}
 
 		if subscriptionCount == 0 {
-			fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
+			fmt.Printf("main: xferSubs: %s is not subscribed to any groups!\n", *emailPtr)
 			return
 		}
 		targetUser, err := client.SearchMemberDetails(*destEmailPtr)
 		if err != nil {
-			fmt.Printf("Error running %s: %v\n", *cmdPtr, err)
+			fmt.Printf("main: xferSubs: Error running %s: %v\n", *cmdPtr, err)
 			return
 		}
-		targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, srcUsersSubs)
-		fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
+		if *listFilterPtr != "" {
+			fmt.Printf("main: xferSubs: Getting user groups for %s: filtered by %s\n", srcUser.FullName, *listFilterPtr)
+			filteredCount, filteredList := filterSrcUserSubs(*listFilterPtr, srcUsersSubs)
+			targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, filteredList)
+			if err != nil {
+				fmt.Printf("main: xferSubs: Error granting owner perms from %s to : filtered by %s %+v \n", srcUser.FullName, *targetUser, err)
+			}
+			fmt.Printf("main: xferSubs: targetUser %s should be an OWNER on %d namely \n %+v\n", *targetUser, filteredCount, targetUserSubs)
+		} else {
+			targetUserSubs, err := client.GrantOwnerPermsToGroupMember(*targetUser, srcUsersSubs)
+			if err != nil {
+				fmt.Printf("Error running client.GrantOwnerPermsToGroupMember(%s, %s): %v\n", *targetUser, srcUsersSubs, err)
+				return
+			}
+			fmt.Printf("targetUserSubs %+v\n", targetUserSubs)
+		}
+
 	case "pendMsgs":
 
 		pendingMessages, count, err := client.GetPendingMsgList()
 		if err != nil {
-			fmt.Printf("groups-admin: Error returned by client.getLists(%s) %s: %v \n", *cmdPtr, err)
+			fmt.Printf("groups-admin: Error returned by client.GetPendingMsgList(): %v \n", err)
 			return
 		}
 		fmt.Printf("pendMsgs: found %d ON MAIN GROUP\n", count)
