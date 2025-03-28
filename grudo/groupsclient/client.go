@@ -303,14 +303,15 @@ func (c *GroupsClient) Authenticate(email, password string) error {
 	}
 
 	groupsApiLoginUrl := Sprintf("%s/api/v1/login", c.BaseURL)
-
+	Printf("api: %s, formData: %v\n", groupsApiLoginUrl, formData)
 	resp, err := c.Client.Post(groupsApiLoginUrl, "application/x-www-form-urlencoded", strings.NewReader(formData.Encode()))
 	if err != nil {
 		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return Errorf("received non-200 response code: %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		return Errorf("received non-200 response code: %d\n%s", resp.StatusCode, errBody)
 	}
 
 	body, err := io.ReadAll(resp.Body)
