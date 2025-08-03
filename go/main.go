@@ -29,7 +29,7 @@ func main() {
 	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
 	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
 	listFilterPtr := flag.String("filter", "", "RegEx to filter the lists of subscriptions that the command will work on")
-	cmdPtr := flag.String("cmd", "view", "Can be one of: srcUserSubs, getUser, xferSubs or pendMsgs")
+	cmdPtr := flag.String("cmd", "view", "Can be one of: srcUserSubs, getUser, xferSubs, members, or pendMsgs")
 	destEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
 
 	flag.Parse()
@@ -51,6 +51,20 @@ func main() {
 	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
 	fmt.Printf("FullName of loggedInUser: %v\n", srcUser.FullName)
 	switch *cmdPtr {
+	case "members":
+		// Get the list of members where the existing user has Owner permissions
+		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
+		if err != nil {
+			fmt.Printf("main: Error getting user groups for %s: %v\n", srcUser.FullName, err)
+			return
+		}
+
+		if subscriptionCount == 0 {
+			fmt.Printf("main: %s is not subscribed to any groups!\n", *emailPtr)
+			return
+		}
+		fmt.Println("Writing report to members.psv")
+		membershipReport(srcUsersSubs, client)
 	case "srcUserSubs":
 		// Get the list of subgroups where the existing user has Owner permissions
 		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
@@ -131,6 +145,56 @@ func main() {
 		}
 	default:
 		fmt.Printf("main.go: unknown sub command %s\n", *cmdPtr)
+	}
+}
+func membershipReport(subs []groupsclient.MemberInfo, client *groupsclient.GroupsClient) {
+	// Open or create members.psv for writing (overwrite file)
+	file, err := os.Create("members.psv")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create members.psv: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	for _, sub := range subs {
+		members, err := client.GetMembers(sub.GroupID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting membership list for %s. Error: %v\n", sub.GroupName, err)
+			continue
+		}
+		for _, member := range members {
+			fullName := member.FullName
+			if fullName == "" {
+				fullName = "name missing"
+			}
+			// Write pipe-separated line to file
+			line := fmt.Sprintf("%s | %s | %s\n", sub.NiceGroupName, fullName, member.Email)
+			if _, err := writer.WriteString(line); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to write member line for %s: %v\n", member.Email, err)
+			}
+		}
+	}
+}
+
+func membershipReportOLD(subs []groupsclient.MemberInfo, client *groupsclient.GroupsClient) {
+
+	for _, sub := range subs {
+		members, err := client.GetMembers(sub.GroupID)
+		if err != nil {
+			fmt.Fprint(os.Stderr, "Error getting membership list for %s. Error: %v", sub.GroupName, err)
+		}
+		for _, member := range members {
+			var fullName string
+			if member.FullName != "" {
+				fullName = member.FullName
+			} else {
+				fullName = "name missing"
+			}
+			fmt.Printf("%s | %s | %s\n", sub.NiceGroupName, fullName, member.Email)
+		}
 	}
 }
 
