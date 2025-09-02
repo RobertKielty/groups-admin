@@ -13,7 +13,6 @@ import (
 // filterSrcUserSubs takes a regular expression in re and returns an array of MemberInfo whose GroupName filed
 // matches the regular expression in filter
 func filterSrcUserSubs(re string, subs []groupsclient.MemberInfo) (int, []groupsclient.MemberInfo) {
-	filteredCount := 0
 	filteredList := make([]groupsclient.MemberInfo, 0)
 	var subsRegExp = regexp.MustCompile(re)
 	for _, sub := range subs {
@@ -21,7 +20,7 @@ func filterSrcUserSubs(re string, subs []groupsclient.MemberInfo) (int, []groups
 			filteredList = append(filteredList, sub)
 		}
 	}
-	return filteredCount, filteredList
+	return len(filteredList), filteredList
 }
 
 func main() {
@@ -175,25 +174,6 @@ func membershipReport(subs []groupsclient.MemberInfo, client *groupsclient.Group
 			if _, err := writer.WriteString(line); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to write member line for %s: %v\n", member.Email, err)
 			}
-		}
-	}
-}
-
-func membershipReportOLD(subs []groupsclient.MemberInfo, client *groupsclient.GroupsClient) {
-
-	for _, sub := range subs {
-		members, err := client.GetMembers(sub.GroupID)
-		if err != nil {
-			fmt.Fprint(os.Stderr, "Error getting membership list for %s. Error: %v", sub.GroupName, err)
-		}
-		for _, member := range members {
-			var fullName string
-			if member.FullName != "" {
-				fullName = member.FullName
-			} else {
-				fullName = "name missing"
-			}
-			fmt.Printf("%s | %s | %s\n", sub.NiceGroupName, fullName, member.Email)
 		}
 	}
 }

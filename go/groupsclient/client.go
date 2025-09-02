@@ -272,7 +272,7 @@ type PendingMsgList struct {
 	SecondOrder   string       `json:"second_order"`
 	Query         string       `json:"query"`
 	SortDir       string       `json:"sort_dir"`
-	Data          []PendingMsg `json:"pending_msg"`
+	Data          []PendingMsg `json:"data"`
 }
 
 func (mi MemberInfo) String() string {
@@ -504,7 +504,7 @@ func (c *GroupsClient) GetMemberId(groupId int, userId int) (int, error) {
 
 	// ref https://groups.io/api#pagination
 	for hasMore != false {
-		endpoint := Sprintf("/api/v1/getmemberss?limit=100&page_token=%d", nextPageToken)
+		endpoint := Sprintf("/api/v1/getmembers?limit=100&page_token=%d", nextPageToken)
 		forLoopResponse, err := c.doRequest("GET", endpoint, nil)
 
 		if err != nil {
@@ -571,7 +571,7 @@ func (c *GroupsClient) GetMembers(groupId int) ([]MemberInfo, error) {
 
 	// ref https://groups.io/api#pagination
 	for hasMore != false {
-		endpoint := Sprintf("/api/v1/getmemberss?limit=100&page_token=%d", nextPageToken)
+		endpoint := Sprintf("/api/v1/getmembers?limit=100&page_token=%d", nextPageToken)
 		forLoopResponse, err := c.doRequest("GET", endpoint, nil)
 
 		if err != nil {
@@ -683,12 +683,12 @@ func (c *GroupsClient) GrantOwnerPermsToGroupMember(newOwner MemberInfo, targetG
 			m, ugmError := c.UpdateGroupMember(group.GroupID, thisGroupsMemberId, "mod_status", "sub_modstatus_owner")
 			if ugmError == nil {
 				groupsUpdated++
-				log.Printf("INFO Member %s should now be an owner on group %d", m.FullName, group.GroupName)
+				log.Printf("INFO Member %s should now be an owner on group %s", m.FullName, group.GroupName)
 			} else {
 				log.Printf("WARN Member %s was not updated to owner of group %s", newOwner.FullName, group.GroupName)
 			}
 		} else {
-			log.Printf("WARN : Member %s was not a member of group %s GetMemberId returned", newOwner.FullName, group.GroupName, gmiError)
+			log.Printf("WARN: Member %s is not a member of group %s. GetMemberId error: %v", newOwner.FullName, group.GroupName, gmiError)
 		}
 	}
 	return groupsUpdated, err

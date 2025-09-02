@@ -1,0 +1,6 @@
+# Go build caches and outputs
+go/.gocache/
+go/groups-admin
+
+# Generated reports
+members.psv
