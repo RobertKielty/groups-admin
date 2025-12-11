@@ -28,7 +28,7 @@ func main() {
 	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
 	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
 	listFilterPtr := flag.String("filter", "", "RegEx to filter the lists of subscriptions that the command will work on")
-	cmdPtr := flag.String("cmd", "view", "Can be one of: srcUserSubs, getUser, xferSubs, members, removeMember, or pendMsgs")
+	cmdPtr := flag.String("cmd", "members", "Can be one of: srcUserSubs, getUser, xferSubs, members, removeMember, or pendMsgs")
 	destEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
 
 	flag.Parse()
